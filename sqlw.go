@@ -1,6 +1,7 @@
 package sqlw
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -18,9 +19,9 @@ var (
 
 // DB struct wrapper for sqlx connection
 type DB struct {
-	sqlxdb     []*sqlx.DB
-	activedb   []int
-	inactivedb []int
+	sqlxDb     []*sqlx.DB
+	activeDb   []int
+	inactiveDb []int
 	driverName string
 	groupName  string
 	length     int
@@ -114,7 +115,7 @@ func (db *DB) Ping() error {
 	var err error
 
 	if !db.heartBeat {
-		for _, val := range db.sqlxdb {
+		for _, val := range db.sqlxDb {
 			err = val.Ping()
 			if err != nil {
 				return err
@@ -123,9 +124,9 @@ func (db *DB) Ping() error {
 		return err
 	}
 
-	for i := 0; i < len(db.activedb); i++ {
-		val := db.activedb[i]
-		err = db.sqlxdb[val].Ping()
+	for i := 0; i < len(db.activeDb); i++ {
+		val := db.activeDb[i]
+		err = db.sqlxDb[val].Ping()
 		name := db.stats[val].Name
 
 		if err != nil {
@@ -134,9 +135,9 @@ func (db *DB) Ping() error {
 			}
 
 			db.stats[val].Connected = false
-			db.activedb = append(db.activedb[:i], db.activedb[i+1:]...)
+			db.activeDb = append(db.activeDb[:i], db.activeDb[i+1:]...)
 			i--
-			db.inactivedb = append(db.inactivedb, val)
+			db.inactiveDb = append(db.inactiveDb, val)
 			db.stats[val].Error = errors.New(name + ": " + err.Error())
 			dbLengthMutex.Lock()
 			db.length--
@@ -148,9 +149,9 @@ func (db *DB) Ping() error {
 		}
 	}
 
-	for i := 0; i < len(db.inactivedb); i++ {
-		val := db.inactivedb[i]
-		err = db.sqlxdb[val].Ping()
+	for i := 0; i < len(db.inactiveDb); i++ {
+		val := db.inactiveDb[i]
+		err = db.sqlxDb[val].Ping()
 		name := db.stats[val].Name
 
 		if err != nil {
@@ -158,9 +159,9 @@ func (db *DB) Ping() error {
 			db.stats[val].Error = errors.New(name + ": " + err.Error())
 		} else {
 			db.stats[val].Connected = true
-			db.inactivedb = append(db.inactivedb[:i], db.inactivedb[i+1:]...)
+			db.inactiveDb = append(db.inactiveDb[:i], db.inactiveDb[i+1:]...)
 			i--
-			db.activedb = append(db.activedb, val)
+			db.activeDb = append(db.activeDb, val)
 			db.stats[val].LastActive = time.Now().Format(time.RFC1123)
 			db.stats[val].Error = nil
 			dbLengthMutex.Lock()
@@ -175,10 +176,10 @@ func (db *DB) Ping() error {
 func (db *DB) Prepare(query string) (*Stmt, error) {
 	var err error
 	stmt := new(Stmt)
-	stmts := make([]*sql.Stmt, len(db.sqlxdb))
+	stmts := make([]*sql.Stmt, len(db.sqlxDb))
 
-	for i := range db.sqlxdb {
-		stmts[i], err = db.sqlxdb[i].Prepare(query)
+	for i := range db.sqlxDb {
+		stmts[i], err = db.sqlxDb[i].Prepare(query)
 
 		if err != nil {
 			return nil, err
@@ -192,10 +193,10 @@ func (db *DB) Prepare(query string) (*Stmt, error) {
 // Preparex sqlx stmt
 func (db *DB) Preparex(query string) (*Stmtx, error) {
 	var err error
-	stmts := make([]*sqlx.Stmt, len(db.sqlxdb))
+	stmts := make([]*sqlx.Stmt, len(db.sqlxDb))
 
-	for i := range db.sqlxdb {
-		stmts[i], err = db.sqlxdb[i].Preparex(query)
+	for i := range db.sqlxDb {
+		stmts[i], err = db.sqlxDb[i].Preparex(query)
 
 		if err != nil {
 			return nil, err
@@ -207,8 +208,8 @@ func (db *DB) Preparex(query string) (*Stmtx, error) {
 
 // SetMaxOpenConnections to set max connections
 func (db *DB) SetMaxOpenConnections(max int) {
-	for i := range db.sqlxdb {
-		db.sqlxdb[i].SetMaxOpenConns(max)
+	for i := range db.sqlxDb {
+		db.sqlxDb[i].SetMaxOpenConns(max)
 	}
 }
 
@@ -216,94 +217,94 @@ func (db *DB) SetMaxOpenConnections(max int) {
 // Expired connections may be closed lazily before reuse.
 // If d <= 0, connections are reused forever.
 func (db *DB) SetConnMaxLifetime(d time.Duration) {
-	for i := range db.sqlxdb {
-		db.sqlxdb[i].SetConnMaxLifetime(d)
+	for i := range db.sqlxDb {
+		db.sqlxDb[i].SetConnMaxLifetime(d)
 	}
 }
 
 // Slave return slave database
 func (db *DB) Slave() *sqlx.DB {
-	return db.sqlxdb[db.slave()]
+	return db.sqlxDb[db.slave()]
 }
 
 // Master return master database
 func (db *DB) Master() *sqlx.DB {
-	return db.sqlxdb[0]
+	return db.sqlxDb[0]
 }
 
 // Query queries the database and returns an *sql.Rows.
 func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	r, err := db.sqlxdb[db.slave()].Query(query, args...)
+	r, err := db.sqlxDb[db.slave()].Query(query, args...)
 	return r, err
 }
 
 // QueryRow queries the database and returns an *sqlx.Row.
 func (db *DB) QueryRow(query string, args ...interface{}) *sql.Row {
-	rows := db.sqlxdb[db.slave()].QueryRow(query, args...)
+	rows := db.sqlxDb[db.slave()].QueryRow(query, args...)
 	return rows
 }
 
 // Queryx queries the database and returns an *sqlx.Rows.
 func (db *DB) Queryx(query string, args ...interface{}) (*sqlx.Rows, error) {
-	r, err := db.sqlxdb[db.slave()].Queryx(query, args...)
+	r, err := db.sqlxDb[db.slave()].Queryx(query, args...)
 	return r, err
 }
 
 // QueryRowx queries the database and returns an *sqlx.Row.
 func (db *DB) QueryRowx(query string, args ...interface{}) *sqlx.Row {
-	rows := db.sqlxdb[db.slave()].QueryRowx(query, args...)
+	rows := db.sqlxDb[db.slave()].QueryRowx(query, args...)
 	return rows
 }
 
 // Exec using master db
 func (db *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return db.sqlxdb[0].Exec(query, args...)
+	return db.sqlxDb[0].Exec(query, args...)
 }
 
 // MustExec (panic) runs MustExec using master database.
 func (db *DB) MustExec(query string, args ...interface{}) sql.Result {
-	return db.sqlxdb[0].MustExec(query, args...)
+	return db.sqlxDb[0].MustExec(query, args...)
 }
 
 // Select using slave db.
 func (db *DB) Select(dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[db.slave()].Select(dest, query, args...)
+	return db.sqlxDb[db.slave()].Select(dest, query, args...)
 }
 
 // SelectMaster using master db.
 func (db *DB) SelectMaster(dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[0].Select(dest, query, args...)
+	return db.sqlxDb[0].Select(dest, query, args...)
 }
 
 // Get using slave.
 func (db *DB) Get(dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[db.slave()].Get(dest, query, args...)
+	return db.sqlxDb[db.slave()].Get(dest, query, args...)
 }
 
 // GetMaster using master.
 func (db *DB) GetMaster(dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[0].Get(dest, query, args...)
+	return db.sqlxDb[0].Get(dest, query, args...)
 }
 
 // NamedExec using master db.
 func (db *DB) NamedExec(query string, arg interface{}) (sql.Result, error) {
-	return db.sqlxdb[0].NamedExec(query, arg)
+	return db.sqlxDb[0].NamedExec(query, arg)
 }
 
 // Begin sql transaction
 func (db *DB) Begin() (*sql.Tx, error) {
-	return db.sqlxdb[0].Begin()
+	return db.sqlxDb[0].Begin()
 }
 
 // Beginx sqlx transaction
 func (db *DB) Beginx() (*sqlx.Tx, error) {
-	return db.sqlxdb[0].Beginx()
+	return db.sqlxDb[0].Beginx()
 }
 
 // MustBegin starts a transaction, and panics on error. Returns an *sqlx.Tx instead
 // of an *sql.Tx.
 func (db *DB) MustBegin() *sqlx.Tx {
-	tx, err := db.sqlxdb[0].Beginx()
+	tx, err := db.sqlxDb[0].Beginx()
 	if err != nil {
 		panic(err)
 	}
@@ -312,17 +313,17 @@ func (db *DB) MustBegin() *sqlx.Tx {
 
 // Rebind query
 func (db *DB) Rebind(query string) string {
-	return db.sqlxdb[db.slave()].Rebind(query)
+	return db.sqlxDb[db.slave()].Rebind(query)
 }
 
 // RebindMaster will rebind query for master
 func (db *DB) RebindMaster(query string) string {
-	return db.sqlxdb[0].Rebind(query)
+	return db.sqlxDb[0].Rebind(query)
 }
 
 // Close closes all database connections
 func (db *DB) Close() error {
-	for _, val := range db.sqlxdb {
+	for _, val := range db.sqlxDb {
 		err := val.Close()
 		if err != nil {
 			return err
@@ -334,7 +335,7 @@ func (db *DB) Close() error {
 // SetMaxIdleConns sets the maximum number of connections in the idle
 // connection pool for all connections
 func (db *DB) SetMaxIdleConns(n int) {
-	for _, val := range db.sqlxdb {
+	for _, val := range db.sqlxDb {
 		val.SetMaxIdleConns(n)
 	}
 }
@@ -475,7 +476,7 @@ func (db *DB) slave() int {
 	}
 
 	slave := int(1 + (atomic.AddUint64(&db.count, 1) % uint64(db.length-1)))
-	active := db.activedb[slave]
+	active := db.activeDb[slave]
 	return active
 }
 
@@ -483,12 +484,12 @@ func (db *DB) slave() int {
 func InitMocking(dbConn *sql.DB, slaveAmount int) *DB {
 
 	db := &DB{
-		sqlxdb: make([]*sqlx.DB, slaveAmount+1),
+		sqlxDb: make([]*sqlx.DB, slaveAmount+1),
 		stats:  make([]DbStatus, slaveAmount+1),
 	}
 
 	for i := 0; i <= slaveAmount; i++ {
-		db.sqlxdb[i] = sqlx.NewDb(dbConn, "postgres")
+		db.sqlxDb[i] = sqlx.NewDb(dbConn, "postgres")
 		name := fmt.Sprintf("slave-%d", i)
 		if i == 0 {
 			name = "master"
@@ -499,11 +500,11 @@ func InitMocking(dbConn *sql.DB, slaveAmount int) *DB {
 			Connected:  true,
 			LastActive: time.Now().String(),
 		}
-		db.activedb = append(db.activedb, i)
+		db.activeDb = append(db.activeDb, i)
 	}
 
 	db.driverName = "postgres"
 	db.groupName = "sqlt-open"
-	db.length = len(db.sqlxdb)
+	db.length = len(db.sqlxDb)
 	return db
 }

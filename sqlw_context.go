@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 func open(ctx context.Context, driverName, sources string, groupName string) (*DB, error) {
@@ -21,16 +23,16 @@ func open(ctx context.Context, driverName, sources string, groupName string) (*D
 	}
 
 	db := &DB{
-		sqlxdb: make([]*sqlx.DB, connsLength),
+		sqlxDb: make([]*sqlx.DB, connsLength),
 		stats:  make([]DbStatus, connsLength),
 	}
 	db.length = connsLength
 	db.driverName = driverName
 
 	for i := range conns {
-		db.sqlxdb[i], err = sqlx.Open(driverName, conns[i])
+		db.sqlxDb[i], err = sqlx.Open(driverName, conns[i])
 		if err != nil {
-			db.inactivedb = append(db.inactivedb, i)
+			db.inactiveDb = append(db.inactiveDb, i)
 			return nil, err
 		}
 		constatus := true
@@ -50,7 +52,7 @@ func open(ctx context.Context, driverName, sources string, groupName string) (*D
 		}
 
 		db.stats[i] = status
-		db.activedb = append(db.activedb, i)
+		db.activeDb = append(db.activeDb, i)
 	}
 
 	// set the default group name
@@ -80,7 +82,7 @@ func (db *DB) PingContext(ctx context.Context) error {
 	var err error
 
 	if !db.heartBeat {
-		for _, val := range db.sqlxdb {
+		for _, val := range db.sqlxDb {
 			err = val.PingContext(ctx)
 			if err != nil {
 				return err
@@ -89,9 +91,9 @@ func (db *DB) PingContext(ctx context.Context) error {
 		return err
 	}
 
-	for i := 0; i < len(db.activedb); i++ {
-		val := db.activedb[i]
-		err = db.sqlxdb[val].PingContext(ctx)
+	for i := 0; i < len(db.activeDb); i++ {
+		val := db.activeDb[i]
+		err = db.sqlxDb[val].PingContext(ctx)
 		name := db.stats[val].Name
 
 		if err != nil {
@@ -100,9 +102,9 @@ func (db *DB) PingContext(ctx context.Context) error {
 			}
 
 			db.stats[val].Connected = false
-			db.activedb = append(db.activedb[:i], db.activedb[i+1:]...)
+			db.activeDb = append(db.activeDb[:i], db.activeDb[i+1:]...)
 			i--
-			db.inactivedb = append(db.inactivedb, val)
+			db.inactiveDb = append(db.inactiveDb, val)
 			db.stats[val].Error = errors.New(name + ": " + err.Error())
 			dbLengthMutex.Lock()
 			db.length--
@@ -114,9 +116,9 @@ func (db *DB) PingContext(ctx context.Context) error {
 		}
 	}
 
-	for i := 0; i < len(db.inactivedb); i++ {
-		val := db.inactivedb[i]
-		err = db.sqlxdb[val].PingContext(ctx)
+	for i := 0; i < len(db.inactiveDb); i++ {
+		val := db.inactiveDb[i]
+		err = db.sqlxDb[val].PingContext(ctx)
 		name := db.stats[val].Name
 
 		if err != nil {
@@ -124,9 +126,9 @@ func (db *DB) PingContext(ctx context.Context) error {
 			db.stats[val].Error = errors.New(name + ": " + err.Error())
 		} else {
 			db.stats[val].Connected = true
-			db.inactivedb = append(db.inactivedb[:i], db.inactivedb[i+1:]...)
+			db.inactiveDb = append(db.inactiveDb[:i], db.inactiveDb[i+1:]...)
 			i--
-			db.activedb = append(db.activedb, val)
+			db.activeDb = append(db.activeDb, val)
 			db.stats[val].LastActive = time.Now().Format(time.RFC1123)
 			db.stats[val].Error = nil
 			dbLengthMutex.Lock()
@@ -139,32 +141,32 @@ func (db *DB) PingContext(ctx context.Context) error {
 
 // SelectContext using slave db.
 func (db *DB) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[db.slave()].SelectContext(ctx, dest, query, args...)
+	return db.sqlxDb[db.slave()].SelectContext(ctx, dest, query, args...)
 }
 
 // SelectMasterContext using master db.
 func (db *DB) SelectMasterContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[0].SelectContext(ctx, dest, query, args...)
+	return db.sqlxDb[0].SelectContext(ctx, dest, query, args...)
 }
 
 // GetContext using slave.
 func (db *DB) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[db.slave()].GetContext(ctx, dest, query, args...)
+	return db.sqlxDb[db.slave()].GetContext(ctx, dest, query, args...)
 }
 
 // GetMasterContext using master.
 func (db *DB) GetMasterContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return db.sqlxdb[0].GetContext(ctx, dest, query, args...)
+	return db.sqlxDb[0].GetContext(ctx, dest, query, args...)
 }
 
 // PrepareContext return sql stmt
 func (db *DB) PrepareContext(ctx context.Context, query string) (*Stmt, error) {
 	var err error
 	stmt := new(Stmt)
-	stmts := make([]*sql.Stmt, len(db.sqlxdb))
+	stmts := make([]*sql.Stmt, len(db.sqlxDb))
 
-	for i := range db.sqlxdb {
-		stmts[i], err = db.sqlxdb[i].PrepareContext(ctx, query)
+	for i := range db.sqlxDb {
+		stmts[i], err = db.sqlxDb[i].PrepareContext(ctx, query)
 
 		if err != nil {
 			return nil, err
@@ -178,10 +180,10 @@ func (db *DB) PrepareContext(ctx context.Context, query string) (*Stmt, error) {
 // PreparexContext sqlx stmt
 func (db *DB) PreparexContext(ctx context.Context, query string) (*Stmtx, error) {
 	var err error
-	stmts := make([]*sqlx.Stmt, len(db.sqlxdb))
+	stmts := make([]*sqlx.Stmt, len(db.sqlxDb))
 
-	for i := range db.sqlxdb {
-		stmts[i], err = db.sqlxdb[i].PreparexContext(ctx, query)
+	for i := range db.sqlxDb {
+		stmts[i], err = db.sqlxDb[i].PreparexContext(ctx, query)
 
 		if err != nil {
 			return nil, err
@@ -193,36 +195,36 @@ func (db *DB) PreparexContext(ctx context.Context, query string) (*Stmtx, error)
 
 // QueryContext queries the database and returns an *sql.Rows.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	r, err := db.sqlxdb[db.slave()].QueryContext(ctx, query, args...)
+	r, err := db.sqlxDb[db.slave()].QueryContext(ctx, query, args...)
 	return r, err
 }
 
 // QueryRowContext queries the database and returns an *sqlx.Row.
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	rows := db.sqlxdb[db.slave()].QueryRowContext(ctx, query, args...)
+	rows := db.sqlxDb[db.slave()].QueryRowContext(ctx, query, args...)
 	return rows
 }
 
 // QueryxContext queries the database and returns an *sqlx.Rows.
 func (db *DB) QueryxContext(ctx context.Context, query string, args ...interface{}) (*sqlx.Rows, error) {
-	r, err := db.sqlxdb[db.slave()].QueryxContext(ctx, query, args...)
+	r, err := db.sqlxDb[db.slave()].QueryxContext(ctx, query, args...)
 	return r, err
 }
 
 // QueryRowxContext queries the database and returns an *sqlx.Row.
 func (db *DB) QueryRowxContext(ctx context.Context, query string, args ...interface{}) *sqlx.Row {
-	rows := db.sqlxdb[db.slave()].QueryRowxContext(ctx, query, args...)
+	rows := db.sqlxDb[db.slave()].QueryRowxContext(ctx, query, args...)
 	return rows
 }
 
 // ExecContext using master db
 func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	return db.sqlxdb[0].ExecContext(ctx, query, args...)
+	return db.sqlxDb[0].ExecContext(ctx, query, args...)
 }
 
 // MustExecContext (panic) runs MustExec using master database.
 func (db *DB) MustExecContext(ctx context.Context, query string, args ...interface{}) sql.Result {
-	return db.sqlxdb[0].MustExecContext(ctx, query, args...)
+	return db.sqlxDb[0].MustExecContext(ctx, query, args...)
 }
 
 // ExecContext will always go to production
